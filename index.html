@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Motion Detection with Recording</title>
+    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+</head>
+
+<body>
+    <h2>Motion Detection with Video Recording</h2>
+    <video id="video" autoplay muted></video>
+    <canvas id="canvasOutput" style="display:none;"></canvas>
+    <canvas id="timestampCanvas" style="display:none;"></canvas> <p id="status">Loading...</p>
+
+    <script>
+        let video = document.getElementById('video');
+        let statusEl = document.getElementById('status');
+        let timestampCanvas = document.getElementById('timestampCanvas'); // Get the new canvas
+        let timestampCtx = timestampCanvas.getContext('2d'); // Get its 2D context
+
+        let cap, src, gray, prevGray, diff;
+        let recording = false;
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        // Variables for countdown (initialize to 0)
+        let countdownValue = 0;
+        let countdownStartTime = 0;
+
+        function onOpenCvReady() {
+            console.log("OpenCV.js is ready.");
+            navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(function (stream) {
+                video.srcObject = stream;
+                video.play();
+                video.onloadedmetadata = () => {
+                    // Set video element dimensions to ensure they are stable
+                    video.width = video.videoWidth;
+                    video.height = video.videoHeight;
+
+                    // Set dimensions for the timestamp canvas
+                    timestampCanvas.width = video.videoWidth;
+                    timestampCanvas.height = video.videoHeight;
+
+                    cap = new cv.VideoCapture(video);
+                    setupOpenCV();
+                    requestAnimationFrame(processVideo);
+
+                    // Prepare MediaRecorder to capture from the timestampCanvas
+                    canvasStream = timestampCanvas.captureStream(30); // Capture at 30 FPS, adjust as needed
+                    mediaRecorder = new MediaRecorder(canvasStream, { mimeType: 'video/webm' });
+                    mediaRecorder.ondataavailable = event => {
+                        if (event.data.size > 0) recordedChunks.push(event.data);
+                    };
+                    mediaRecorder.onstop = sendVideoToBackend;
+
+                };
+
+            }).catch(err => {
+                alert("Webcam error: " + err);
+                console.error("Webcam error:", err);
+            });
+        }
+
+        function setupOpenCV() {
+            let width = video.videoWidth;
+            let height = video.videoHeight;
+            src = new cv.Mat(height, width, cv.CV_8UC4);
+            gray = new cv.Mat(height, width, cv.CV_8UC1);
+            prevGray = new cv.Mat(height, width, cv.CV_8UC1);
+            diff = new cv.Mat(height, width, cv.CV_8UC1);
+            console.log(`OpenCV mats initialized with dimensions: ${width}x${height}`);
+        }
+
+        function processVideo() {
+            const width = video.videoWidth;
+            const height = video.videoHeight;
+
+            if (src.cols !== width || src.rows !== height) {
+                console.log(`Resizing OpenCV mats from ${src.cols}x${src.rows} to ${width}x${height}`);
+                // Release existing mats if they exist and re-create them with new dimensions
+                if (!src.empty()) src.delete();
+                if (!gray.empty()) gray.delete();
+                if (!prevGray.empty()) prevGray.delete();
+                if (!diff.empty()) diff.delete();
+
+                src = new cv.Mat(height, width, cv.CV_8UC4);
+                gray = new cv.Mat(height, width, cv.CV_8UC1);
+                prevGray = new cv.Mat(height, width, cv.CV_8UC1);
+                diff = new cv.Mat(height, width, cv.CV_8UC1);
+
+                // Update timestamp canvas dimensions if video size changes
+                timestampCanvas.width = width;
+                timestampCanvas.height = height;
+            }
+
+            cap.read(src); // Read frame into src Mat
+
+            // Draw the current video frame onto the timestampCanvas
+            timestampCtx.drawImage(video, 0, 0, width, height);
+
+            // Draw the current timestamp on the timestampCanvas
+            const now = new Date();
+            const timestampText = now.toLocaleString('en-ZA', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                timeZone: 'Africa/Johannesburg' // Explicitly set for South African time
+            });
+
+            timestampCtx.font = "bold 24px Arial"; // Adjust font size and style as needed
+            timestampCtx.fillStyle = "white"; // Color of the text
+            timestampCtx.shadowColor = "black";
+            timestampCtx.shadowBlur = 3;
+            // Position the text (e.g., top-left corner with some padding)
+            timestampCtx.fillText(timestampText, 10, 30);
+
+            // Draw the countdown if recording
+            if (recording) {
+                // Using 60 seconds as the recording duration from setTimeout in startRecording
+                const elapsedSeconds = (Date.now() - countdownStartTime) / 1000;
+                countdownValue = Math.max(0, 60 - Math.floor(elapsedSeconds));
+
+                timestampCtx.font = "bold 48px Arial"; // Larger font for countdown
+                timestampCtx.fillStyle = "red"; // Distinct color for countdown
+                timestampCtx.shadowColor = "black";
+                timestampCtx.shadowBlur = 5;
+                // Position the countdown (e.g., top-right corner)
+                const countdownText = countdownValue.toString();
+                const textMetrics = timestampCtx.measureText(countdownText);
+                timestampCtx.fillText(countdownText, width - textMetrics.width - 20, 50); // Adjust position as needed
+            }
+
+
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+            if (!prevGray.empty()) {
+                cv.absdiff(gray, prevGray, diff);
+                let nonZero = cv.countNonZero(diff);
+                // The current index.html uses `Thresh`, but it's not defined. Assuming it should be `threshold`.
+                const threshold = 200000;
+                statusEl.textContent = `Thresh: ${threshold} Non-zero pixels: ${nonZero} diff from threshold: ${Math.abs(threshold - nonZero)}`; // Status update
+                console.log("Non-zero pixels (motion difference):", nonZero); // Console log for data
+
+                if (nonZero > threshold) {
+                    if (!recording) {
+                        console.log(new Date() + `🚨 Motion Detected! pixels is ${nonZero}. Starting recording...`); // Console log for event
+                        startRecording();
+                    } else {
+                        console.log(new Date() + " 🚨 Motion Detected! Already recording..."); // Console log for event
+                    }
+                } else {
+                    console.log(new Date() + " 👀 No motion detected | " + (recording ? "recording" : "not recording")); // Console log for data
+                }
+            }
+
+            gray.copyTo(prevGray);
+            requestAnimationFrame(processVideo);
+        }
+
+        function startRecording() {
+            if (recording == true) {
+                console.log(new Date() + "🔴 Already recording..."); // Console log for event
+                return;
+            }
+            recording = true;
+
+            recordedChunks = [];
+            countdownStartTime = Date.now(); // Record when countdown starts
+            mediaRecorder.start();
+            console.log(new Date() + " MediaRecorder started."); // Console log for event
+
+            setTimeout(() => {
+                mediaRecorder.stop();
+                recording = false;
+                statusEl.textContent = "✅ Done recording"; // Status update
+                console.log(new Date() + " ✅ Done recording"); // Console log for event
+            }, 60000); // record 60 seconds
+        }
+
+        function sendVideoToBackend() {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            console.log('Recorded Blob size:', blob.size, 'bytes'); // Console log for data
+            const formData = new FormData();
+            formData.append('video', blob, `motion-${Date.now()}.webm`); // Using Date.now() for unique filename
+
+            fetch('http://localhost:3000/upload', {
+                method: 'POST',
+                body: formData
+            }).then(res => {
+                statusEl.textContent += " | Uploaded ✅"; // Status update
+                console.log(new Date() + " | Uploaded ✅"); // Console log for event
+            }).catch(err => {
+                console.error(new Date() + 'Upload failed:', err); // Console log for errors
+                statusEl.textContent += " | Upload failed ❌"; // Status update
+                console.log(new Date() + " | Upload failed ❌"); // Console log for event
+            });
+        }
+    </script>
+</body>
+
+</html>
