@@ -10,7 +10,8 @@
     <h2>Motion Detection with Video Recording</h2>
     <video id="video" autoplay muted></video>
     <canvas id="canvasOutput" style="display:none;"></canvas>
-    <canvas id="timestampCanvas" style="display:none;"></canvas> <p id="status">Loading...</p>
+    <canvas id="timestampCanvas" style="display:none;"></canvas>
+    <p id="status">Loading...</p>
 
     <script>
         let video = document.getElementById('video');
@@ -27,8 +28,33 @@
         let countdownValue = 0;
         let countdownStartTime = 0;
 
-        function onOpenCvReady() {
+        // Stabilization variables
+        let stabilizing = true; // Flag to indicate stabilization phase
+        const STABILIZATION_DURATION_MS = 5000; // 5 seconds stabilization period
+
+        async function checkBackendStatus() {
+            statusEl.textContent = "Checking backend status...";
+            console.log("Checking backend status at http://localhost:3000...");
+            try {
+                const response = await fetch('http://localhost:3000', { method: 'HEAD', mode: 'no-cors' });
+                console.log("Backend check response received.");
+                statusEl.textContent = "Backend is running. Initializing webcam...";
+                return true; // Backend is reachable
+            } catch (error) {
+                statusEl.textContent = "Error: Backend server is not running at http://localhost:3000. Please start the server.";
+                console.error("Backend check failed:", error);
+                return false; // Backend is not reachable
+            }
+        }
+
+        async function onOpenCvReady() {
             console.log("OpenCV.js is ready.");
+
+            const backendIsUp = await checkBackendStatus();
+            if (!backendIsUp) {
+                return; // Stop execution if backend is not running
+            }
+
             navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(function (stream) {
                 video.srcObject = stream;
                 video.play();
@@ -45,6 +71,16 @@
                     setupOpenCV();
                     requestAnimationFrame(processVideo);
 
+                    // Start stabilization timer
+                    statusEl.textContent = `Stabilizing... Please wait ${STABILIZATION_DURATION_MS / 1000} seconds.`;
+                    console.log(`Starting stabilization for ${STABILIZATION_DURATION_MS / 1000} seconds.`);
+                    setTimeout(() => {
+                        stabilizing = false;
+                        statusEl.textContent = "Stabilization complete. Motion detection active.";
+                        console.log("Stabilization complete. Motion detection active.");
+                    }, STABILIZATION_DURATION_MS);
+
+
                     // Prepare MediaRecorder to capture from the timestampCanvas
                     canvasStream = timestampCanvas.captureStream(30); // Capture at 30 FPS, adjust as needed
                     mediaRecorder = new MediaRecorder(canvasStream, { mimeType: 'video/webm' });
@@ -58,6 +94,7 @@
             }).catch(err => {
                 alert("Webcam error: " + err);
                 console.error("Webcam error:", err);
+                statusEl.textContent = "Webcam error: " + err.name + " - " + err.message; // More detailed status update
             });
         }
 
@@ -70,6 +107,8 @@
             diff = new cv.Mat(height, width, cv.CV_8UC1);
             console.log(`OpenCV mats initialized with dimensions: ${width}x${height}`);
         }
+
+        let nomotion = false; let motionrec = false; let motionnorec = false;
 
         function processVideo() {
             const width = video.videoWidth;
@@ -120,9 +159,9 @@
 
             // Draw the countdown if recording
             if (recording) {
-                // Using 60 seconds as the recording duration from setTimeout in startRecording
+                // Using 15 seconds as the recording duration from setTimeout in startRecording
                 const elapsedSeconds = (Date.now() - countdownStartTime) / 1000;
-                countdownValue = Math.max(0, 60 - Math.floor(elapsedSeconds));
+                countdownValue = Math.max(0, 15 - Math.floor(elapsedSeconds));
 
                 timestampCtx.font = "bold 48px Arial"; // Larger font for countdown
                 timestampCtx.fillStyle = "red"; // Distinct color for countdown
@@ -139,25 +178,57 @@
 
             if (!prevGray.empty()) {
                 cv.absdiff(gray, prevGray, diff);
-                let nonZero = cv.countNonZero(diff);
-                // The current index.html uses `Thresh`, but it's not defined. Assuming it should be `threshold`.
-                const threshold = 200000;
-                statusEl.textContent = `Thresh: ${threshold} Non-zero pixels: ${nonZero} diff from threshold: ${Math.abs(threshold - nonZero)}`; // Status update
-                console.log("Non-zero pixels (motion difference):", nonZero); // Console log for data
 
-                if (nonZero > threshold) {
-                    if (!recording) {
-                        console.log(new Date() + `🚨 Motion Detected! pixels is ${nonZero}. Starting recording...`); // Console log for event
-                        startRecording();
+                let nonZero = cv.countNonZero(diff);
+
+                if (nonZero != 0) {
+                    const threshold = 200000; // Assuming Thresh referred to this variable
+                    statusEl.textContent = `Thresh: ${threshold} Non-zero pixels: ${nonZero} diff from threshold: ${threshold - nonZero}`; // Status update
+
+                    // Only perform motion detection if not in stabilization phase
+                    if (!stabilizing) {
+                        if (nonZero > threshold) {
+                            if (!recording) {
+                                if (!motionrec) { // prevent multiple logs
+                                    console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`); 
+                                    console.log(new Date() + `🚨 Motion Detected! pixels is ${nonZero}. Starting recording...`); // Console log for event
+                                    nomotion = false; // Set nomotion to true to prevent multiple recordings
+                                    motionnorec = false;
+                                    motionrec = true;
+                                }
+
+                                startRecording();
+                            } else {
+                                if (!motionnorec) { // prevent multiple logs
+                                    console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`); 
+                                    console.log(new Date() + " 🚨 Motion Detected! Already recording..."); // Console log for event
+                                    nomotion = false; // Set nomotion to true to prevent multiple recordings
+                                    motionnorec = true;
+                                    motionrec = false;
+                                }
+                            }
+                        } else {
+                            if (!nomotion) { // prevent multiple logs
+                                nomotion = true; 
+                                motionnorec = false;
+                                motionrec = false;
+                                console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`); 
+                                console.log(new Date() + " 👀 No motion detected | " + (recording ? "recording" : "not recording")); // Console log for data
+                            }
+                        }
                     } else {
-                        console.log(new Date() + " 🚨 Motion Detected! Already recording..."); // Console log for event
+                        statusEl.textContent = `Stabilizing... ${Math.floor((STABILIZATION_DURATION_MS - (Date.now() - (countdownStartTime || Date.now()))) / 1000)}s remaining.`; // Update status during stabilization
+                        // Reset prevGray during stabilization to ensure a clean baseline
+                        gray.copyTo(prevGray); // Important for stabilization
                     }
-                } else {
-                    console.log(new Date() + " 👀 No motion detected | " + (recording ? "recording" : "not recording")); // Console log for data
                 }
             }
 
-            gray.copyTo(prevGray);
+            // Only copy gray to prevGray here if not in stabilization, as we want to capture multiple frames to establish a proper prevGray
+            // The logic inside `if (!stabilizing)` handles the copy effectively.
+            if (!stabilizing) {
+                gray.copyTo(prevGray);
+            }
             requestAnimationFrame(processVideo);
         }
 
@@ -178,14 +249,14 @@
                 recording = false;
                 statusEl.textContent = "✅ Done recording"; // Status update
                 console.log(new Date() + " ✅ Done recording"); // Console log for event
-            }, 60000); // record 60 seconds
+            }, 15000); // record 15 seconds
         }
 
         function sendVideoToBackend() {
             const blob = new Blob(recordedChunks, { type: 'video/webm' });
             console.log('Recorded Blob size:', blob.size, 'bytes'); // Console log for data
             const formData = new FormData();
-            formData.append('video', blob, `motion-${Date.now()}.webm`); // Using Date.now() for unique filename
+            formData.append('video', blob, `motion-${new Date()}.webm`); // Using Date.now() for unique filename
 
             fetch('http://localhost:3000/upload', {
                 method: 'POST',
