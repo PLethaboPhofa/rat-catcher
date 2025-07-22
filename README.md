@@ -1,4 +1,4 @@
-# 🐀 rat-catcher
+# 🎥🐀 rat-catcher
 
 A lightweight motion detection and recording for your laptop powered by [Bun](https://bun.sh). 
 
