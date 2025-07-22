@@ -32,6 +32,8 @@
         let stabilizing = true; // Flag to indicate stabilization phase
         const STABILIZATION_DURATION_MS = 5000; // 5 seconds stabilization period
 
+        const threshold = 200000; // Threshold for motion detection, adjust as needed
+
         async function checkBackendStatus() {
             statusEl.textContent = "Checking backend status...";
             console.log("Checking backend status at http://localhost:3000...");
@@ -182,7 +184,6 @@
                 let nonZero = cv.countNonZero(diff);
 
                 if (nonZero != 0) {
-                    const threshold = 200000; // Assuming Thresh referred to this variable
                     statusEl.textContent = `Thresh: ${threshold} Non-zero pixels: ${nonZero} diff from threshold: ${threshold - nonZero}`; // Status update
 
                     // Only perform motion detection if not in stabilization phase
