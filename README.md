@@ -6,6 +6,13 @@ A lightweight motion detection and recording for your laptop powered by [Bun](ht
 
 ## 🚀 Getting Started
 
+### Prerequisites
+- [Bun](https://bun.sh) installed on your system. 
+```
+curl -fsSL https://bun.com/install | bash -s "bun-v1.2.19"
+```
+- A webcam connected to your laptop.
+
 ### Install Dependencies
 
 ```bash

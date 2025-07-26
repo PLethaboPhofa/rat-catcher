@@ -16,36 +16,33 @@
     <script>
         let video = document.getElementById('video');
         let statusEl = document.getElementById('status');
-        let timestampCanvas = document.getElementById('timestampCanvas'); // Get the new canvas
-        let timestampCtx = timestampCanvas.getContext('2d'); // Get its 2D context
+        let timestampCanvas = document.getElementById('timestampCanvas');
+        let timestampCtx = timestampCanvas.getContext('2d');
 
         let cap, src, gray, prevGray, diff;
         let recording = false;
         let mediaRecorder;
         let recordedChunks = [];
 
-        // Variables for countdown (initialize to 0)
         let countdownValue = 0;
         let countdownStartTime = 0;
 
-        // Stabilization variables
-        let stabilizing = true; // Flag to indicate stabilization phase
-        const STABILIZATION_DURATION_MS = 5000; // 5 seconds stabilization period
+        let stabilizing = true;
+        const STABILIZATION_DURATION_MS = 5000;
+        const threshold = 200000;
 
-        const threshold = 200000; // Threshold for motion detection, adjust as needed
+        let animationFrameId;
 
         async function checkBackendStatus() {
             statusEl.textContent = "Checking backend status...";
-            console.log("Checking backend status at http://localhost:3000...");
             try {
-                const response = await fetch('http://localhost:3000', { method: 'HEAD', mode: 'no-cors' });
-                console.log("Backend check response received.");
+                await fetch('http://localhost:3000', { method: 'HEAD', mode: 'no-cors' });
                 statusEl.textContent = "Backend is running. Initializing webcam...";
-                return true; // Backend is reachable
+                return true;
             } catch (error) {
                 statusEl.textContent = "Error: Backend server is not running at http://localhost:3000. Please start the server.";
                 console.error("Backend check failed:", error);
-                return false; // Backend is not reachable
+                return false;
             }
         }
 
@@ -53,50 +50,38 @@
             console.log("OpenCV.js is ready.");
 
             const backendIsUp = await checkBackendStatus();
-            if (!backendIsUp) {
-                return; // Stop execution if backend is not running
-            }
+            if (!backendIsUp) return;
 
             navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(function (stream) {
                 video.srcObject = stream;
                 video.play();
                 video.onloadedmetadata = () => {
-                    // Set video element dimensions to ensure they are stable
                     video.width = video.videoWidth;
                     video.height = video.videoHeight;
-
-                    // Set dimensions for the timestamp canvas
                     timestampCanvas.width = video.videoWidth;
                     timestampCanvas.height = video.videoHeight;
 
                     cap = new cv.VideoCapture(video);
                     setupOpenCV();
-                    requestAnimationFrame(processVideo);
+                    animationFrameId = requestAnimationFrame(processVideo);
 
-                    // Start stabilization timer
                     statusEl.textContent = `Stabilizing... Please wait ${STABILIZATION_DURATION_MS / 1000} seconds.`;
-                    console.log(`Starting stabilization for ${STABILIZATION_DURATION_MS / 1000} seconds.`);
                     setTimeout(() => {
                         stabilizing = false;
                         statusEl.textContent = "Stabilization complete. Motion detection active.";
-                        console.log("Stabilization complete. Motion detection active.");
                     }, STABILIZATION_DURATION_MS);
 
-
-                    // Prepare MediaRecorder to capture from the timestampCanvas
-                    canvasStream = timestampCanvas.captureStream(30); // Capture at 30 FPS, adjust as needed
+                    canvasStream = timestampCanvas.captureStream(30);
                     mediaRecorder = new MediaRecorder(canvasStream, { mimeType: 'video/webm' });
                     mediaRecorder.ondataavailable = event => {
                         if (event.data.size > 0) recordedChunks.push(event.data);
                     };
                     mediaRecorder.onstop = sendVideoToBackend;
-
                 };
-
             }).catch(err => {
                 alert("Webcam error: " + err);
                 console.error("Webcam error:", err);
-                statusEl.textContent = "Webcam error: " + err.name + " - " + err.message; // More detailed status update
+                statusEl.textContent = "Webcam error: " + err.name + " - " + err.message;
             });
         }
 
@@ -107,7 +92,6 @@
             gray = new cv.Mat(height, width, cv.CV_8UC1);
             prevGray = new cv.Mat(height, width, cv.CV_8UC1);
             diff = new cv.Mat(height, width, cv.CV_8UC1);
-            console.log(`OpenCV mats initialized with dimensions: ${width}x${height}`);
         }
 
         let nomotion = false; let motionrec = false; let motionnorec = false;
@@ -117,8 +101,6 @@
             const height = video.videoHeight;
 
             if (src.cols !== width || src.rows !== height) {
-                console.log(`Resizing OpenCV mats from ${src.cols}x${src.rows} to ${width}x${height}`);
-                // Release existing mats if they exist and re-create them with new dimensions
                 if (!src.empty()) src.delete();
                 if (!gray.empty()) gray.delete();
                 if (!prevGray.empty()) prevGray.delete();
@@ -129,17 +111,13 @@
                 prevGray = new cv.Mat(height, width, cv.CV_8UC1);
                 diff = new cv.Mat(height, width, cv.CV_8UC1);
 
-                // Update timestamp canvas dimensions if video size changes
                 timestampCanvas.width = width;
                 timestampCanvas.height = height;
             }
 
-            cap.read(src); // Read frame into src Mat
-
-            // Draw the current video frame onto the timestampCanvas
+            cap.read(src);
             timestampCtx.drawImage(video, 0, 0, width, height);
 
-            // Draw the current timestamp on the timestampCanvas
             const now = new Date();
             const timestampText = now.toLocaleString('en-ZA', {
                 year: 'numeric',
@@ -149,128 +127,138 @@
                 minute: '2-digit',
                 second: '2-digit',
                 hour12: false,
-                timeZone: 'Africa/Johannesburg' // Explicitly set for South African time
+                timeZone: 'Africa/Johannesburg'
             });
 
-            timestampCtx.font = "bold 24px Arial"; // Adjust font size and style as needed
-            timestampCtx.fillStyle = "white"; // Color of the text
+            timestampCtx.font = "bold 24px Arial";
+            timestampCtx.fillStyle = "white";
             timestampCtx.shadowColor = "black";
             timestampCtx.shadowBlur = 3;
-            // Position the text (e.g., top-left corner with some padding)
             timestampCtx.fillText(timestampText, 10, 30);
 
-            // Draw the countdown if recording
             if (recording) {
-                // Using 15 seconds as the recording duration from setTimeout in startRecording
                 const elapsedSeconds = (Date.now() - countdownStartTime) / 1000;
                 countdownValue = Math.max(0, 15 - Math.floor(elapsedSeconds));
-
-                timestampCtx.font = "bold 48px Arial"; // Larger font for countdown
-                timestampCtx.fillStyle = "red"; // Distinct color for countdown
+                timestampCtx.font = "bold 48px Arial";
+                timestampCtx.fillStyle = "red";
                 timestampCtx.shadowColor = "black";
                 timestampCtx.shadowBlur = 5;
-                // Position the countdown (e.g., top-right corner)
                 const countdownText = countdownValue.toString();
                 const textMetrics = timestampCtx.measureText(countdownText);
-                timestampCtx.fillText(countdownText, width - textMetrics.width - 20, 50); // Adjust position as needed
+                timestampCtx.fillText(countdownText, width - textMetrics.width - 20, 50);
             }
-
 
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
             if (!prevGray.empty()) {
                 cv.absdiff(gray, prevGray, diff);
-
                 let nonZero = cv.countNonZero(diff);
 
                 if (nonZero != 0) {
-                    statusEl.textContent = `Thresh: ${threshold} Non-zero pixels: ${nonZero} diff from threshold: ${threshold - nonZero}`; // Status update
+                    statusEl.textContent = `Thresh: ${threshold} Non-zero pixels: ${nonZero} diff from threshold: ${threshold - nonZero}`;
 
-                    // Only perform motion detection if not in stabilization phase
                     if (!stabilizing) {
                         if (nonZero > threshold) {
                             if (!recording) {
-                                if (!motionrec) { // prevent multiple logs
-                                    console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`); 
-                                    console.log(new Date() + `🚨 Motion Detected! pixels is ${nonZero}. Starting recording...`); // Console log for event
-                                    nomotion = false; // Set nomotion to true to prevent multiple recordings
+                                if (!motionrec) {
+                                    console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`);
+                                    console.log(new Date() + `🚨 Motion Detected! pixels is ${nonZero}. Starting recording...`);
+                                    nomotion = false;
                                     motionnorec = false;
                                     motionrec = true;
                                 }
 
                                 startRecording();
                             } else {
-                                if (!motionnorec) { // prevent multiple logs
-                                    console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`); 
-                                    console.log(new Date() + " 🚨 Motion Detected! Already recording..."); // Console log for event
-                                    nomotion = false; // Set nomotion to true to prevent multiple recordings
+                                if (!motionnorec) {
+                                    console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`);
+                                    console.log(new Date() + " 🚨 Motion Detected! Already recording...");
+                                    nomotion = false;
                                     motionnorec = true;
                                     motionrec = false;
                                 }
                             }
                         } else {
-                            if (!nomotion) { // prevent multiple logs
-                                nomotion = true; 
+                            if (!nomotion) {
+                                nomotion = true;
                                 motionnorec = false;
                                 motionrec = false;
-                                console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`); 
-                                console.log(new Date() + " 👀 No motion detected | " + (recording ? "recording" : "not recording")); // Console log for data
+                                console.log(` motionnonrec ${motionnorec == true} motionrec ${motionrec == true} nomotion ${nomotion == true}`);
+                                console.log(new Date() + " 👀 No motion detected | " + (recording ? "recording" : "not recording"));
                             }
                         }
                     } else {
-                        statusEl.textContent = `Stabilizing... ${Math.floor((STABILIZATION_DURATION_MS - (Date.now() - (countdownStartTime || Date.now()))) / 1000)}s remaining.`; // Update status during stabilization
-                        // Reset prevGray during stabilization to ensure a clean baseline
-                        gray.copyTo(prevGray); // Important for stabilization
+                        statusEl.textContent = `Stabilizing... ${Math.floor((STABILIZATION_DURATION_MS - (Date.now() - (countdownStartTime || Date.now()))) / 1000)}s remaining.`;
+                        gray.copyTo(prevGray);
                     }
                 }
             }
 
-            // Only copy gray to prevGray here if not in stabilization, as we want to capture multiple frames to establish a proper prevGray
-            // The logic inside `if (!stabilizing)` handles the copy effectively.
             if (!stabilizing) {
                 gray.copyTo(prevGray);
             }
-            requestAnimationFrame(processVideo);
+
+            animationFrameId = requestAnimationFrame(processVideo);
         }
 
         function startRecording() {
-            if (recording == true) {
-                console.log(new Date() + "🔴 Already recording..."); // Console log for event
-                return;
-            }
+            if (recording == true) return;
             recording = true;
 
             recordedChunks = [];
-            countdownStartTime = Date.now(); // Record when countdown starts
+            countdownStartTime = Date.now();
             mediaRecorder.start();
-            console.log(new Date() + " MediaRecorder started."); // Console log for event
 
             setTimeout(() => {
                 mediaRecorder.stop();
                 recording = false;
-                statusEl.textContent = "✅ Done recording"; // Status update
-                console.log(new Date() + " ✅ Done recording"); // Console log for event
-            }, 15000); // record 15 seconds
+                statusEl.textContent = "✅ Done recording";
+            }, 15000);
         }
 
         function sendVideoToBackend() {
             const blob = new Blob(recordedChunks, { type: 'video/webm' });
-            console.log('Recorded Blob size:', blob.size, 'bytes'); // Console log for data
+            console.log('Recorded Blob size:', blob.size, 'bytes');
             const formData = new FormData();
-            formData.append('video', blob, `motion-${new Date()}.webm`); // Using Date.now() for unique filename
+            formData.append('video', blob, `motion-${new Date()}.webm`);
 
             fetch('http://localhost:3000/upload', {
                 method: 'POST',
                 body: formData
             }).then(res => {
-                statusEl.textContent += " | Uploaded ✅"; // Status update
-                console.log(new Date() + " | Uploaded ✅"); // Console log for event
+                statusEl.textContent += " | Uploaded ✅";
             }).catch(err => {
-                console.error(new Date() + 'Upload failed:', err); // Console log for errors
-                statusEl.textContent += " | Upload failed ❌"; // Status update
-                console.log(new Date() + " | Upload failed ❌"); // Console log for event
+                console.error(new Date() + 'Upload failed:', err);
+                statusEl.textContent += " | Upload failed ❌";
+            }).finally(() => {
+                recordedChunks.length = 0;
             });
         }
+
+        // 🔁 MEMORY CLEANUP SECTION
+        window.addEventListener('beforeunload', () => {
+            cancelAnimationFrame(animationFrameId);
+
+            if (video && video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+
+            recordedChunks.length = 0;
+            mediaRecorder = null;
+            canvasStream = null;
+
+            if (src) { src.delete(); src = null; }
+            if (gray) { gray.delete(); gray = null; }
+            if (prevGray) { prevGray.delete(); prevGray = null; }
+            if (diff) { diff.delete(); diff = null; }
+
+            cap = null;
+        });
     </script>
 </body>
 
