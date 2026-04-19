@@ -3,7 +3,7 @@
 
 <head>
     <title>Motion Detection with Recording</title>
-    <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+    <script async src="opencv.js" onload="onOpenCvReady();"></script>
 </head>
 
 <body>
@@ -36,11 +36,11 @@
         async function checkBackendStatus() {
             statusEl.textContent = "Checking backend status...";
             try {
-                await fetch('http://localhost:3000', { method: 'HEAD', mode: 'no-cors' });
+                await fetch('http://localhost:3005', { method: 'HEAD', mode: 'no-cors' });
                 statusEl.textContent = "Backend is running. Initializing webcam...";
                 return true;
             } catch (error) {
-                statusEl.textContent = "Error: Backend server is not running at http://localhost:3000. Please start the server.";
+                statusEl.textContent = "Error: Backend server is not running at http://localhost:3005. Please start the server.";
                 console.error("Backend check failed:", error);
                 return false;
             }
@@ -222,7 +222,7 @@
             const formData = new FormData();
             formData.append('video', blob, `motion-${new Date()}.webm`);
 
-            fetch('http://localhost:3000/upload', {
+            fetch('http://localhost:3005/upload', {
                 method: 'POST',
                 body: formData
             }).then(res => {

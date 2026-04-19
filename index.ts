@@ -7,7 +7,7 @@ const uploadDir = join(import.meta.dir, "uploads");
 mkdirSync(uploadDir, { recursive: true });
 
 serve({
-    port: 3000,
+    port: 3005,
     async fetch(req) {
         // Handle CORS preflight requests
         if (req.method === "OPTIONS") {
